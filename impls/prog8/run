@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+main() {
+    local program=$1 bas=$(mktemp) out=$(mktemp) arg ln
+    if [[ -z $program ]]; then
+        program=step0_repl.prg
+    fi
+    exec 3>$bas
+    cat <<EOF >&3
+100 REM INJECT ARGUMENTS INTO PARAMETER SPACE
+110 REM \$BF00 = ARGUMENT COUNT (ARGC)
+120 A = \$BF00
+130 POKE A, $#
+140 IF $# = 0 THEN END
+150 REM THEN A LIST OF NULL-TERMINATED STRINGS
+160 FOR I=1 TO $#
+170 : READ A$
+180 : FOR J=1 TO LEN(A\$)
+190 :   POKE A+J, ASC(MID\$(A\$, J))
+200 : NEXT J
+210 : POKE A+J, 0
+220 : A=A+J
+230 NEXT I
+EOF
+    if (( $# )); then
+        (( ln = 240 ))
+        line="\"${1^^}\""
+        shift
+        for arg; do 
+            if (( ${#line} + ${#ln} + 6 >= 80 )); then
+                printf >&3 '%d DATA %s\n' "$ln" "$line"
+                (( ln += 10 ))
+                line="\"${arg^^}\""
+            else
+                line+=",\"${arg^^}\""
+            fi
+        done
+        printf >&3 '%d DATA %s\n' "$ln" "$line"
+    fi
+    printf >&3 'RUN\n'
+    printf >&3 'LOAD "%s"\n' "${program^^}"
+    exec 3>&-
+    x16emu -bas "$bas" -run -echo iso | python -u /Users/mjreed/git/github.com/markjreed/mal/impls/prog8/toprompt.py &
+    while IFS= read -r line; do
+        pbcopy <<<"${line}"
+        paste_to_x16emu
+    done
+    pbcopy <<<$'\n\n\n'
+    paste_to_x16emu
+    sleep 1
+    pbcopy <<<'POWEROFF'
+    paste_to_x16emu
+}
+
+paste_to_x16emu() {
+        osascript -e 'tell application "System Events"' \
+                  -e     'tell process "x16emu" to set frontmost to true' \
+                  -e     'keystroke "v" using command down' \
+                  -e 'end tell'
+}
+
+main "$@"
